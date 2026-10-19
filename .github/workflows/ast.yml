@@ -1,0 +1,101 @@
+
+name: AST Scan Orchestrator
+
+on:
+  workflow_dispatch:
+    inputs:
+      repo_full_name:
+        description: "Repository to scan (owner/repo)"
+        required: true
+        type: string
+
+      branch:
+        description: "Branch to scan"
+        required: true
+        type: string
+
+      commit_sha:
+        description: "Merge commit SHA (post-merge)"
+        required: false
+        type: string
+
+      pr_number:
+        description: "Pull request number (post-merge)"
+        required: false
+        type: string
+
+      api_url:
+        description: "Conviso API URL"
+        required: false
+        type: string
+        default: https://api.convisoappsec.com
+
+      company_id:
+        description: "Conviso company ID"
+        required: false
+        type: string
+
+      asset_id:
+        description: "Conviso asset ID"
+        required: false
+        type: string
+
+      scan_run_id:
+        description: "Scan run ID from the platform"
+        required: false
+        type: string
+
+jobs:
+  run-ast-scan:
+    runs-on: ubuntu-latest
+
+    container:
+      image: convisoappsec/convisoast:latest
+
+    steps:
+      - name: Get repository token
+        id: repo_token
+        env:
+          CONVISO_API_KEY: ${{ secrets.CONVISO_API_KEY }}
+          CONVISO_API_URL: ${{ inputs.api_url }}
+          CONVISO_REPO_FULL_NAME: ${{ inputs.repo_full_name }}
+          CONVISO_COMPANY_ID: ${{ inputs.company_id || vars.CONVISO_COMPANY_ID }}
+          CONVISO_ASSET_ID: ${{ inputs.asset_id }}
+          CONVISO_SCAN_RUN_ID: ${{ inputs.scan_run_id }}
+        run: |
+          set -euo pipefail
+
+          TOKEN=$(conviso-ast-repository-token --provider github)
+
+          echo "::add-mask::$TOKEN"
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout target repository
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ inputs.repo_full_name }}
+          ref: ${{ inputs.branch }}
+          fetch-depth: 0
+          token: ${{ steps.repo_token.outputs.token }}
+
+      - name: Run Conviso AST
+        env:
+          CONVISO_API_KEY: ${{ secrets.CONVISO_API_KEY }}
+          CONVISO_API_URL: ${{ inputs.api_url }}
+          CONVISO_COMPANY_ID: ${{ inputs.company_id || vars.CONVISO_COMPANY_ID }}
+          CONVISO_ASSET_ID: ${{ inputs.asset_id }}
+          CONVISO_SCAN_RUN_ID: ${{ inputs.scan_run_id }}
+        run: |
+          set -euo pipefail
+
+          conviso ast run \
+            --repository-dir . \
+            --output /tmp/conviso-ast-session.zip
+
+      - name: Upload session log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conviso-ast-session
+          path: /tmp/conviso-ast-session.zip
+          if-no-files-found: ignore
